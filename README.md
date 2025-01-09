@@ -1,6 +1,6 @@
-# Filemaker Next.js Integration
+# filemaker-nextjs
 
-This project provides a Supabase-like data manipulation interface for Filemaker DATA API in Next.js applications.
+This project is a tool to make using the FileMaker Data API easier with Next.js, providing Supabase-like data operations.
 
 ## Overview
 
@@ -8,10 +8,10 @@ The Filemaker DATA API allows developers to interact with Filemaker databases pr
 
 ## Features
 
-- FilemakerClient: A TypeScript client for interacting with Filemaker DATA API
-- Authentication: Uses environment variables for Filemaker credentials
+- FileMakerClient: A TypeScript client for interacting with FileMaker DATA API
+- Authentication: Uses a dedicated `FileMakerAuth` class for handling authentication.
 - Type Safety: Fully typed API responses and requests
-- Middleware: Next.js middleware for handling authentication
+- Middleware: Next.js middleware for handling authentication (実装予定)
 
 ## Getting Started
 
@@ -32,54 +32,72 @@ npm run dev
 ### Initialize the Client
 
 ```typescript
+import { createFileMakerClient } from '@/lib/filemaker/FileMakerClient';
 import { FileMakerAuth } from '@/lib/filemaker/FileMakerAuth';
-import { FileMakerClient } from '@/lib/filemaker/FileMakerClient';
 
 const auth = new FileMakerAuth({
-  secret: process.env.NEXT_PUBLIC_FILEMAKER_SECRET,
+  username: process.env.NEXT_PUBLIC_FILEMAKER_USERNAME!, // FileMakerのユーザー名
+  password: process.env.NEXT_PUBLIC_FILEMAKER_PASSWORD!, // FileMakerのパスワード
+  jwtSecret: process.env.JWT_SECRET!, // JWTトークンの署名に使用する秘密鍵
 });
 
-const client = new FileMakerClient({
-  auth,
-});
+const client = createFileMakerClient({ auth });
 ```
 
 ### Data Operations
 
 ```typescript
-// Create record
-const newRecord = await client.from('your-layout').create({
+// Get records from the default database
+const records = await client.get('your-layout');
+
+// Get a single record from the default database
+const singleRecord = await client.get('your-layout').single('recordId');
+
+// Find records with conditions in the default database
+const foundRecords = await client.find('your-layout').eq({ field1: 'value1' });
+
+// Create a new record in the default database
+const newRecord = await client.post('your-layout', {
   field1: 'value1',
   field2: 'value2',
 });
 
-// Read records
-const records = await client.from('your-layout').select('*');
-
-// Update record
-const updatedRecord = await client.from('your-layout').update(recordId, {
+// Update a record in the default database
+const updatedRecord = await client.update('your-layout', 'recordId', {
   field1: 'new-value',
 });
 
-// Delete record
-await client.from('your-layout').delete(recordId);
+// Delete a record from the default database
+await client.delete('your-layout', 'recordId');
+
+// Get records from a specific database
+const recordsFromDb = await client.db('another-database').get('another-layout');
+
+// Update a record in a specific database
+const updatedRecordInDb = await client
+  .db('another-database')
+  .update('another-layout', 'recordId', {
+    field1: 'new-value',
+  });
 ```
+
+**Note:** When the database name is configured in the environment variables (`NEXT_PUBLIC_FILEMAKER_DATABASE_NAME`), `client.get()`, `client.find()`, and `client.post()` methods will use this default database. To access a different database, you can use `client.db('your-database-name')` to specify the target database.
 
 ## Authentication
 
-Authentication is handled through environment variables:
+Authentication is handled using the `FileMakerAuth` class and environment variables:
 
 ```bash
-NEXT_PUBLIC_FILEMAKER_HOST_URL=your-filemaker-server.com
+NEXT_PUBLIC_FILEMAKER_HOST_URL=your-filemaker-server.com/fmi/data/vLatest
 NEXT_PUBLIC_FILEMAKER_DATABASE_NAME=your-database
-NEXT_PUBLIC_FILEMAKER_AUTH_ID=your-username
-NEXT_PUBLIC_FILEMAKER_AUTH_PASS=your-password
-NEXT_PUBLIC_FILEMAKER_SECRET=your-jwt-secret
+NEXT_PUBLIC_FILEMAKER_USERNAME=your-username
+NEXT_PUBLIC_FILEMAKER_PASSWORD=your-password
+JWT_SECRET=your-jwt-secret
 ```
 
 ## Dependencies
 
-- Next.js 14
+- Next.js
 - TypeScript 5
 - Filemaker DATA API
 
