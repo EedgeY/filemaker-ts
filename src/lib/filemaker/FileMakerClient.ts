@@ -241,7 +241,7 @@ class GetBuilder<T> {
       }
 
       const url = `layouts/${this.layoutName}/records`;
-      console.log('[FileMaker] GetBuilder リクエストURL:', url);
+
       const result = (await this.client.sendGet(
         url,
         undefined,
@@ -325,11 +325,6 @@ class PostBuilder<T> {
           'script.presort.param': this.scriptOptions.scriptPreSort.param,
         }),
       };
-
-      console.log('[FileMaker] PostBuilder Request:', {
-        url,
-        requestBody,
-      });
 
       const result = await this.client.sendPost<T[]>(url, requestBody);
       resolve(result);
@@ -451,13 +446,6 @@ export default class FileMakerClient {
     const requestUrl = `${this.filemakerUrl}/${this.currentDatabase}/${path}${
       params?.toString() ? '?' + params.toString() : ''
     }`;
-    console.log('[FileMaker] リクエスト詳細:', {
-      database: this.currentDatabase,
-      url: requestUrl,
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
 
     const response = await this.fetch(requestUrl, {
       method,

@@ -65,7 +65,7 @@ export class FileMakerAuth {
     const cached = this.tokenCache[dbName];
 
     // キャッシュされたトークンが有効な場合
-    if (cached && now < cached.expiresAt - 60000) {
+    if (cached && now < cached.expiresAt - this.TOKEN_EXPIRY_TIME) {
       // 1分のバッファを追加
       try {
         const hostUrl = process.env.NEXT_PUBLIC_FILEMAKER_HOST_URL;
@@ -77,7 +77,6 @@ export class FileMakerAuth {
 
         // トークンの有効性を確認
         const layoutsUrl = `${hostUrl}/${dbName}/layouts`;
-        console.log('[FileMaker] トークン検証リクエスト:', layoutsUrl);
         const response = await fetch(layoutsUrl, {
           method: 'GET',
           headers: {
@@ -103,7 +102,6 @@ export class FileMakerAuth {
 
       const credentials = btoa(`${this.username}:${this.password}`);
       const sessionsUrl = `${hostUrl}/${dbName}/sessions`;
-      console.log('[FileMaker] 新規トークン取得リクエスト:', sessionsUrl);
       const response = await fetch(sessionsUrl, {
         method: 'POST',
         headers: {
@@ -126,7 +124,6 @@ export class FileMakerAuth {
 
       const data = await response.json();
       const newToken = data.response.token;
-      console.log('newToken', newToken);
 
       // キャッシュを更新
       this.tokenCache[dbName] = {
