@@ -1,28 +1,20 @@
-import React from 'react';
 import { getFileMakerClient } from '@/lib/filemaker/createToken';
-import Test from './components/test';
 import SignOutButton from '../components/signout-button';
-import { FileMakerRecord } from '@/lib/filemaker/FileMakerClient';
+import Test from './components/test';
 
 export default async function FileMaker() {
   const client = getFileMakerClient();
-  const result = await client.get('users');
+  const result = await client.get<'users'>('users'); // get メソッドの型引数を指定
   if (!result.response?.data) {
     return <div>データが取得できませんでした。</div>;
   }
-  const formattedData = result.response.data.map((record: FileMakerRecord) => ({
-    ...record,
-    fieldData: {
-      ...record.fieldData,
-      id: Number(record.fieldData.id),
-    },
-  }));
+
   console.log('result', result);
 
   return (
     <div>
       <SignOutButton />
-      <Test data={formattedData} />
+      <Test data={result.response.data} />
     </div>
   );
 }

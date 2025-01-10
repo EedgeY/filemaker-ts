@@ -1,142 +1,188 @@
 # FileMakerClient
 
-FileMaker データベースとやり取りするための TypeScript クライアントライブラリです。
+FileMaker の Data API を使用するための TypeScript クライアントライブラリです。
 
-## 主要なクラスとインターフェース
-
-### FileMakerClient クラス
-
-FileMaker データベースとの接続と操作を行うメインクラスです。
+## 基本的な使い方
 
 ```typescript
-export default class FileMakerClient<Database = FMDatabase> {
-  constructor(
-    token: string,
-    options?: FileMakerClientOptions<string & keyof Database>
-  );
+import { createFileMakerClient } from '@/lib/filemaker/FileMakerClient';
+import { FileMakerAuth } from '@/lib/filemaker/FileMakerAuth';
 
-  public async get(path: string);
-  public async post(path: string, body?: any);
-  public async patch(path: string, body: any);
-  public async delete(path: string);
+// FileMakerAuthインスタンスの作成
+const auth = new FileMakerAuth();
 
-  db<TableName extends string & keyof Database>(
-    dbName: string
-  ): {
-    get: (layoutName: FMLayoutName) => GetBuilder<Database[TableName]>;
-    find: (layoutName: FMLayoutName) => QueryBuilder<Database[TableName]>;
-    post: (
-      layoutName: FMLayoutName,
-      data: Record<string, any>
-    ) => PostBuilder<Database[TableName]>;
-    update: (
-      layoutName: FMLayoutName,
-      recordId: string,
-      data: Record<string, any>
-    ) => Promise<any>;
-    copy: (layoutName: FMLayoutName, recordId: string) => Promise<any>;
-    delete: (layoutName: FMLayoutName, recordId: string) => Promise<any>;
-  };
+// クライアントの作成
+const client = createFileMakerClient({ auth });
+```
+
+## データの取得
+
+### 単一レコードの取得
+
+```typescript
+// users レイアウトから特定のレコードを取得
+const { data, error } = await client.get('users').single('record_id');
+
+if (data) {
+  console.log(data.fieldData.name); // string | null
+  console.log(data.fieldData.farm_id); // number | null
+  console.log(data.fieldData.hidden); // number | null
 }
 ```
 
-### QueryBuilder クラス
-
-データ検索用のビルダークラスです。
+### 複数レコードの取得
 
 ```typescript
-class QueryBuilder<T, D = any> {
-  constructor(client: FileMakerClient<D>, dbName: string, layoutName: string);
+// farm レイアウトから全てのレコードを取得
+const response = await client.get('farm');
+const farms = response.response.data;
 
-  sort(sorts: SortOption[] | SortOption): this;
-  async eq(conditions: Record<string, any>): Promise<{ data: T[] }>;
+// ソート条件を指定して取得
+const sortedFarms = await client.get('farm').sort('farm_name', 'ascend');
+
+// 複数のソート条件を指定
+const multiSortedFarms = await client.get('farm').sort([
+  { fieldName: 'farm_name', sortOrder: 'ascend' },
+  { fieldName: 'farm_id', sortOrder: 'descend' },
+]);
+
+// 取得件数を制限して取得
+const limitedFarms = await client.get('farm').range(0, 10);
+```
+
+### 条件付き検索
+
+```typescript
+// users レイアウトから条件に一致するレコードを検索
+const users = await client.find('users').eq({
+  farm_id: 1,
+  hidden: 0,
+});
+
+// breeding レイアウトから条件に一致するレコードを検索
+const breedings = await client.find('breeding').eq({
+  owner_id: 1,
+  state: 'active',
+});
+```
+
+## データの作成・更新・削除
+
+### レコードの作成
+
+```typescript
+// users レイアウトに新しいレコードを作成
+const newUser = await client.post('users', {
+  name: 'John Doe',
+  farm_id: 1,
+  role: 'user',
+  hidden: 0,
+});
+
+// farm レイアウトに新しいレコードを作成
+const newFarm = await client.post('farm', {
+  farm_name: 'Sample Farm',
+  owner_name: 'John Doe',
+  farm_code: 'FARM001',
+});
+```
+
+### レコードの更新
+
+```typescript
+// users レイアウトのレコードを更新
+const updatedUser = await client.db().update('users', 'record_id', {
+  name: 'Jane Doe',
+  role: 'admin',
+});
+
+// farm レイアウトのレコードを更新
+const updatedFarm = await client.db().update('farm', 'record_id', {
+  farm_name: 'Updated Farm Name',
+  owner_name: 'Jane Doe',
+});
+```
+
+### レコードの削除
+
+```typescript
+// users レイアウトのレコードを削除
+await client.db().delete('users', 'record_id');
+
+// farm レイアウトのレコードを削除
+await client.db().delete('farm', 'record_id');
+```
+
+### レコードのコピー
+
+```typescript
+// users レイアウトのレコードをコピー
+const copiedUser = await client.db().copy('users', 'record_id');
+
+// farm レイアウトのレコードをコピー
+const copiedFarm = await client.db().copy('farm', 'record_id');
+```
+
+## スクリプトの実行
+
+PostBuilder を使用してスクリプトを実行できます：
+
+```typescript
+// レコード作成時にスクリプトを実行
+const result = await client
+  .post('users', { name: 'John Doe' })
+  .script('アカウント制御')
+  .scriptPreRequest('_アカウント登録')
+  .scriptPreSort('test');
+```
+
+## 日付フォーマットの指定
+
+```typescript
+// 日付フォーマットを指定してレコードを作成
+const result = await client
+  .post('users', { created_at: '2024-01-01' })
+  .dateformat(1);
+```
+
+## エラーハンドリング
+
+```typescript
+try {
+  const result = await client.get('users');
+  if (result.messages[0].code !== '0') {
+    console.error('FileMaker API エラー:', result.messages[0].message);
+    return;
+  }
+  // 正常系の処理
+} catch (error) {
+  console.error('リクエストエラー:', error);
 }
 ```
 
-### GetBuilder クラス
+## 型の利用
 
-データ取得用のビルダークラスです。
+このクライアントは`FMDatabase`型を使用して、各レイアウトのフィールド構造を定義しています。
+これにより、TypeScript の型チェックを活用して、安全なデータアクセスが可能になります。
 
 ```typescript
-class GetBuilder<T, D = any> {
-  constructor(client: FileMakerClient<D>, dbName: string, layoutName: string);
+// 型安全なフィールドアクセス
+const users = await client.get('users');
+const user = users.response.data?.[0];
 
-  sort(
-    sorts: string | PartialSortOption | (string | PartialSortOption)[],
-    sortOrder?: 'ascend' | 'descend'
-  ): this;
-  range(start: number, limit: number): this;
-  async single(
-    recordId: string
-  ): Promise<{ data: T | null; error: Error | null }>;
-  async then(
-    resolve: (value: { data: T[] | null; error: Error | null }) => void
-  );
+if (user) {
+  const name: string | null = user.fieldData.name;
+  const farmId: number | null = user.fieldData.farm_id;
+  const hidden: number | null = user.fieldData.hidden;
 }
 ```
 
-### PostBuilder クラス
-
-データ登録用のビルダークラスです。
+## データベースの切り替え
 
 ```typescript
-class PostBuilder<T, D = FMDatabase> {
-  constructor(
-    client: FileMakerClient<D>,
-    dbName: string,
-    layoutName: string,
-    data: Record<string, any>
-  );
+// 別のデータベースを使用
+const otherDb = client.db('other_database');
 
-  script(name: FMScriptName, param?: string | Record<string, any>): this;
-  scriptPreRequest(
-    name: FMScriptName,
-    param?: string | Record<string, any>
-  ): this;
-  scriptPreSort(name: FMScriptName, param?: string | Record<string, any>): this;
-  dateformat(format: 0 | 1 | 2): this;
-  async then(resolve: (value: { data: T | null; error: Error | null }) => void);
-}
+// 別データベースからのデータ取得
+const result = await otherDb.get('users');
 ```
-
-## 使用例
-
-### クライアントの初期化
-
-```typescript
-const filemaker = await createToken('database-name');
-```
-
-### データの取得
-
-```typescript
-const { data, error } = await filemaker
-  .db('database-name')
-  .get('your-layout')
-  .sort('fieldName', 'ascend')
-  .range(0, 10)
-  .then();
-```
-
-### データの検索
-
-```typescript
-const { data, error } = await filemaker
-  .db('database-name')
-  .find('your-layout')
-  .sort([{ fieldName: 'field1', sortOrder: 'ascend' }])
-  .eq({ fieldName: 'value' });
-```
-
-### データの登録
-
-```typescript
-await filemaker
-  .db('database-name')
-  .post('your-layout', { field1: 'value1', field2: 'value2' })
-  .script('your-script', { param1: 'value1' });
-```
-
-## 注意点
-
-- `getToken('database-name')`でトークンを取得してから使用します

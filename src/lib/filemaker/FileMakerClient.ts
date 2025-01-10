@@ -1,8 +1,4 @@
-import {
-  FMDatabase,
-  FMScriptName,
-  FMLayoutName,
-} from '@/types/filemaker/schema';
+import { FMDatabase, FMScriptName } from '@/types/filemaker/schema';
 import { FileMakerAuth } from './FileMakerAuth';
 import bcrypt from 'bcryptjs';
 
@@ -45,11 +41,22 @@ interface ScriptOptions {
   };
 }
 
-export interface FileMakerRecord<T = Record<string, unknown>> {
+export interface FileMakerRecord<T = Record<string, string | number>> {
   fieldData: T;
-  portalData: Record<string, unknown>;
-  recordId: string;
-  modId: string;
+  portalData?: Record<string, string | number>;
+  sort?: SortOption[];
+  limit?: number;
+  offset?: number;
+  script?: string;
+  scriptParam?: string;
+  dateformat?: number;
+  scriptPreRequest?: string;
+  scriptPreRequestParam?: string;
+  scriptPreSort?: string;
+  scriptPreSortParam?: string;
+
+  recordId?: string;
+  modId?: string;
 }
 
 // 基本的なFileMakerのレスポンス型
@@ -82,6 +89,8 @@ export interface FileMakerModifyResponse extends FileMakerBaseResponse {
   response: {
     recordId?: string;
     modId?: string;
+    scriptResult?: string;
+    scriptError?: string;
   };
 }
 
@@ -107,13 +116,13 @@ interface FileMakerUserResponse {
   password: string;
 }
 
-class QueryBuilder<T> {
-  private layoutName: string;
+class QueryBuilder<T extends keyof FMDatabase['Table']> {
+  private layoutName: T;
   private dbName: string;
   private client: FileMakerClient;
   private sortOptions: SortOption[] = [];
 
-  constructor(client: FileMakerClient, dbName: string, layoutName: string) {
+  constructor(client: FileMakerClient, dbName: string, layoutName: T) {
     this.client = client;
     this.dbName = dbName;
     this.layoutName = layoutName;
@@ -125,8 +134,8 @@ class QueryBuilder<T> {
   }
 
   async eq(
-    conditions: Record<string, unknown>
-  ): Promise<FileMakerDataResponse<T>> {
+    conditions: Partial<FMDatabase['Table'][T]['row']['fields']>
+  ): Promise<FileMakerDataResponse<FMDatabase['Table'][T]['row']['fields']>> {
     const query = {
       query: [conditions],
       ...(this.sortOptions.length > 0 && { sort: this.sortOptions }),
@@ -139,15 +148,15 @@ class QueryBuilder<T> {
   }
 }
 
-class GetBuilder<T> {
-  private layoutName: string;
+class GetBuilder<T extends keyof FMDatabase['Table']> {
+  private layoutName: T;
   private dbName: string;
   private client: FileMakerClient;
   private sortOptions: SortOption[] = [];
   private startRecord?: number;
   private limitRecords?: number;
 
-  constructor(client: FileMakerClient, dbName: string, layoutName: string) {
+  constructor(client: FileMakerClient, dbName: string, layoutName: T) {
     this.client = client;
     this.dbName = dbName;
     this.layoutName = layoutName;
@@ -211,13 +220,14 @@ class GetBuilder<T> {
     return this;
   }
 
-  async single(
-    recordId: string
-  ): Promise<{ data: FileMakerRecord<T> | null; error: Error | null }> {
+  async single(recordId: string): Promise<{
+    data: FileMakerRecord<FMDatabase['Table'][T]['row']['fields']> | null;
+    error: Error | null;
+  }> {
     try {
       const result = (await this.client.sendGet(
         `layouts/${this.layoutName}/records/${recordId}`
-      )) as FileMakerDataResponse<T>;
+      )) as FileMakerDataResponse<FMDatabase['Table'][T]['row']['fields']>;
       return {
         data: result.response?.data?.[0] || null,
         error: null,
@@ -228,7 +238,9 @@ class GetBuilder<T> {
   }
 
   async then(
-    resolve: (value: FileMakerDataResponse<T>) => void
+    resolve: (
+      value: FileMakerDataResponse<FMDatabase['Table'][T]['row']['fields']>
+    ) => void
   ): Promise<void> {
     try {
       const params = new URLSearchParams();
@@ -246,7 +258,7 @@ class GetBuilder<T> {
         url,
         undefined,
         params
-      )) as FileMakerDataResponse<T>;
+      )) as FileMakerDataResponse<FMDatabase['Table'][T]['row']['fields']>;
       resolve(result);
     } catch (error) {
       resolve({
@@ -257,8 +269,8 @@ class GetBuilder<T> {
   }
 }
 
-class PostBuilder<T> {
-  private layoutName: string;
+class PostBuilder<T extends keyof FMDatabase['Table']> {
+  private layoutName: T;
   private dbName: string;
   private client: FileMakerClient;
   private scriptOptions: ScriptOptions = {};
@@ -268,7 +280,7 @@ class PostBuilder<T> {
   constructor(
     client: FileMakerClient,
     dbName: string,
-    layoutName: string,
+    layoutName: T,
     data: Record<string, unknown>
   ) {
     this.client = client;
@@ -297,9 +309,7 @@ class PostBuilder<T> {
     return this;
   }
 
-  async then(
-    resolve: (value: FileMakerDataResponse<T[]>) => void
-  ): Promise<void> {
+  async then(resolve: (value: FileMakerModifyResponse) => void): Promise<void> {
     try {
       if (!this.data || Object.keys(this.data).length === 0) {
         throw new Error('Request body cannot be empty');
@@ -326,12 +336,15 @@ class PostBuilder<T> {
         }),
       };
 
-      const result = await this.client.sendPost<T[]>(url, requestBody);
+      const result = await this.client.sendPost<FileMakerModifyResponse>(
+        url,
+        requestBody
+      );
       resolve(result);
     } catch (error) {
       resolve({
         messages: [{ code: 'error', message: (error as Error).message }],
-        response: { data: [] },
+        response: {},
       });
     }
   }
@@ -390,16 +403,12 @@ export default class FileMakerClient {
     return response as FileMakerDataResponse<T>;
   }
 
-  public async sendPost<T>(
+  public async sendPost<T extends FileMakerBaseResponse>(
     path: string,
     body?: unknown
-  ): Promise<FileMakerDataResponse<T>> {
-    const response = await this.request<FileMakerDataResponse<T>>(
-      'POST',
-      path,
-      body
-    );
-    return response as FileMakerDataResponse<T>;
+  ): Promise<T> {
+    const response = await this.request<T>('POST', path, body);
+    return response as T;
   }
 
   public async sendPatch(
@@ -474,29 +483,19 @@ export default class FileMakerClient {
   /**
    * デフォルトのデータベースを使用してレイアウトにアクセス
    */
-  get<T extends FMLayoutName>(layoutName: T) {
-    return new GetBuilder<FMDatabase['Table'][T]>(
-      this,
-      this.defaultDatabase,
-      layoutName
-    );
+  get<T extends keyof FMDatabase['Table']>(layoutName: T) {
+    return new GetBuilder<T>(this, this.defaultDatabase, layoutName);
   }
 
-  find<T extends FMLayoutName>(layoutName: T) {
-    return new QueryBuilder<FMDatabase['Table'][T]>(
-      this,
-      this.defaultDatabase,
-      layoutName
-    );
+  find<T extends keyof FMDatabase['Table']>(layoutName: T) {
+    return new QueryBuilder<T>(this, this.defaultDatabase, layoutName);
   }
 
-  post<T extends FMLayoutName>(layoutName: T, data: Record<string, unknown>) {
-    return new PostBuilder<FMDatabase['Table'][T]>(
-      this,
-      this.defaultDatabase,
-      layoutName,
-      data
-    );
+  post<T extends keyof FMDatabase['Table']>(
+    layoutName: T,
+    data: Record<string, unknown>
+  ) {
+    return new PostBuilder<T>(this, this.defaultDatabase, layoutName, data);
   }
 
   /**
@@ -506,21 +505,15 @@ export default class FileMakerClient {
     const targetDb = dbName || this.defaultDatabase;
     this.currentDatabase = targetDb;
     return {
-      get: <T extends FMLayoutName>(layoutName: T) =>
-        new GetBuilder<FMDatabase['Table'][T]>(this, targetDb, layoutName),
-      find: <T extends FMLayoutName>(layoutName: T) =>
-        new QueryBuilder<FMDatabase['Table'][T]>(this, targetDb, layoutName),
-      post: <T extends FMLayoutName>(
+      get: <T extends keyof FMDatabase['Table']>(layoutName: T) =>
+        new GetBuilder<T>(this, targetDb, layoutName),
+      find: <T extends keyof FMDatabase['Table']>(layoutName: T) =>
+        new QueryBuilder<T>(this, targetDb, layoutName),
+      post: <T extends keyof FMDatabase['Table']>(
         layoutName: T,
         data: Record<string, unknown>
-      ) =>
-        new PostBuilder<FMDatabase['Table'][T]>(
-          this,
-          targetDb,
-          layoutName,
-          data
-        ),
-      update: <T extends FMLayoutName>(
+      ) => new PostBuilder<T>(this, targetDb, layoutName, data),
+      update: <T extends keyof FMDatabase['Table']>(
         layoutName: T,
         recordId: string,
         data: Record<string, unknown>
@@ -528,21 +521,24 @@ export default class FileMakerClient {
         this.sendPatch(`layouts/${layoutName}/records/${recordId}`, {
           fieldData: data,
         }),
-      copy: <T extends FMLayoutName>(layoutName: T, recordId: string) =>
-        this.sendPost(`layouts/${layoutName}/records/${recordId}`),
-      delete: <T extends FMLayoutName>(layoutName: T, recordId: string) =>
-        this.sendDelete(`layouts/${layoutName}/records/${recordId}`),
+      copy: <T extends keyof FMDatabase['Table']>(
+        layoutName: T,
+        recordId: string
+      ) => this.sendPost(`layouts/${layoutName}/records/${recordId}`),
+      delete: <T extends keyof FMDatabase['Table']>(
+        layoutName: T,
+        recordId: string
+      ) => this.sendDelete(`layouts/${layoutName}/records/${recordId}`),
     };
   }
 
   async findUser(username: string): Promise<FileMakerUserResponse | null> {
     try {
-      const response = await this.sendPost<UserFieldData>(
-        `layouts/users/_find`,
-        {
-          query: [{ name: username }],
-        }
-      );
+      const response = await this.sendPost<
+        FileMakerDataResponse<UserFieldData>
+      >(`layouts/users/_find`, {
+        query: [{ name: username }],
+      });
       const userData = response.response?.data?.[0];
 
       if (!userData?.fieldData) return null;
@@ -573,15 +569,14 @@ export default class FileMakerClient {
       const hashedPassword = await bcrypt.hash(password, 10);
 
       // ユーザーの作成
-      const response = await this.sendPost<UserFieldData>(
-        `layouts/users/records`,
-        {
-          fieldData: {
-            name: username,
-            pass: hashedPassword,
-          },
-        }
-      );
+      const response = await this.sendPost<
+        FileMakerDataResponse<UserFieldData>
+      >(`layouts/users/records`, {
+        fieldData: {
+          name: username,
+          pass: hashedPassword,
+        },
+      });
 
       const newUser = response.response?.data?.[0];
       if (!newUser?.fieldData) return null;
