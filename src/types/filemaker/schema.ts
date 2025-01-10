@@ -73,13 +73,19 @@ export type FMInsertFieldName =
 export type FMUpdateFieldName =
   keyof Database['Table'][FMLayoutName]['update']['fields'];
 
+export interface UserRecord {
+  _pk: string;
+  id: number | string | null;
+  name: string | null;
+}
+
 export type FMDatabase = {
   Table: {
     users: {
       row: {
         fields: {
           _pk: string;
-          id: number | null;
+          id: number | string | null;
           name: string | null;
           furikana: string | null;
           hidden: number | null;

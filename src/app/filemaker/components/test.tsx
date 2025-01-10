@@ -1,9 +1,10 @@
 'use client';
 import {
+  FileMakerDataResponse,
   FileMakerModifyResponse,
   FileMakerRecord,
 } from '@/lib/filemaker/FileMakerClient';
-import { FileMakerDataResponse, FMDatabase } from '@/types/filemaker/schema';
+import { FMDatabase } from '@/types/filemaker/schema';
 import { useState } from 'react';
 import { test } from '../action';
 
@@ -19,11 +20,20 @@ const damyData: FileMakerRecord<
   },
 };
 
-export default function Test({ data }: { data: FileMakerDataResponse }) {
+export default function Test({
+  data,
+}: {
+  data?: FileMakerDataResponse<Record<string, unknown>>;
+}) {
   const [res, setRes] = useState<FileMakerModifyResponse>();
 
   const handleTest = async () => {
     const response = await test(damyData);
+    if (response.messages[0].message !== 'OK') {
+      console.log(response.messages[0].message);
+      alert(response.messages[0].message);
+      return;
+    }
     setRes(response);
   };
   return (
@@ -32,12 +42,6 @@ export default function Test({ data }: { data: FileMakerDataResponse }) {
       <div className='flex flex-col gap-4'>
         <pre>{JSON.stringify(res, null, 2)}</pre>
         <pre>{JSON.stringify(data, null, 2)}</pre>
-        {data?.response?.data?.map((item) => (
-          <div key={item.recordId}>
-            <p>{item.fieldData.id}</p>
-            <p>{item.fieldData.name}</p>
-          </div>
-        ))}
       </div>
     </div>
   );

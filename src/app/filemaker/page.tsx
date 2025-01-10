@@ -4,8 +4,9 @@ import Test from './components/test';
 
 export default async function FileMaker() {
   const client = getFileMakerClient();
-  const result = await client.get<'users'>('users'); // get メソッドの型引数を指定
-  if (!result.response?.data) {
+  const result = await client.get('users').single('2');
+
+  if (!result) {
     return <div>データが取得できませんでした。</div>;
   }
 
@@ -14,7 +15,7 @@ export default async function FileMaker() {
   return (
     <div>
       <SignOutButton />
-      <Test data={result.response.data} />
+      <Test data={result} />
     </div>
   );
 }

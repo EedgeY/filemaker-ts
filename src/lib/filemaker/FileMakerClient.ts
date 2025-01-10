@@ -41,25 +41,36 @@ interface ScriptOptions {
   };
 }
 
-export interface FileMakerRecord<T = Record<string, string | number>> {
+// FileMakerのレコード型
+export interface FileMakerRecord<T = Record<string, unknown>> {
   fieldData: T;
-  portalData?: Record<string, string | number>;
-  sort?: SortOption[];
-  limit?: number;
-  offset?: number;
-  script?: string;
-  scriptParam?: string;
-  dateformat?: number;
-  scriptPreRequest?: string;
-  scriptPreRequestParam?: string;
-  scriptPreSort?: string;
-  scriptPreSortParam?: string;
-
+  portalData?: Record<
+    string,
+    Array<{
+      recordId: string;
+      modId: string;
+      [key: string]: unknown;
+    }>
+  >;
   recordId?: string;
   modId?: string;
 }
 
-// 基本的なFileMakerのレスポンス型
+// FileMakerのユーザーフィールド型
+export interface FileMakerUserFields {
+  _pk: string;
+  name: string;
+  pass: string;
+}
+
+// FileMakerのユーザーレスポンス型
+export interface FileMakerUserResponse {
+  id: string;
+  username: string;
+  password: string;
+}
+
+// FileMakerのレスポンス型
 export interface FileMakerBaseResponse {
   messages: Array<{
     code: string;
@@ -79,14 +90,13 @@ export interface FileMakerDataResponse<T = Record<string, unknown>>
       foundCount: number;
       returnedCount: number;
     };
-    data?: FileMakerRecord<T>[];
-    token?: string;
+    data?: Array<FileMakerRecord<T>>;
   };
 }
 
 // レコード作成・更新時のレスポンス型
 export interface FileMakerModifyResponse extends FileMakerBaseResponse {
-  response: {
+  response?: {
     recordId?: string;
     modId?: string;
     scriptResult?: string;
@@ -97,23 +107,6 @@ export interface FileMakerModifyResponse extends FileMakerBaseResponse {
 // 削除時のレスポンス型
 export interface FileMakerDeleteResponse extends FileMakerBaseResponse {
   response: Record<string, never>;
-}
-
-interface UserFieldData {
-  _pk: string;
-  id: number;
-  name: string;
-  pass: string;
-  role: string;
-  farm_id: number;
-  furikana: string;
-  hidden: number;
-}
-
-interface FileMakerUserResponse {
-  id: string;
-  username: string;
-  password: string;
 }
 
 class QueryBuilder<T extends keyof FMDatabase['Table']> {
@@ -135,7 +128,7 @@ class QueryBuilder<T extends keyof FMDatabase['Table']> {
 
   async eq(
     conditions: Partial<FMDatabase['Table'][T]['row']['fields']>
-  ): Promise<FileMakerDataResponse<FMDatabase['Table'][T]['row']['fields']>> {
+  ): Promise<FileMakerDataResponse> {
     const query = {
       query: [conditions],
       ...(this.sortOptions.length > 0 && { sort: this.sortOptions }),
@@ -220,28 +213,37 @@ class GetBuilder<T extends keyof FMDatabase['Table']> {
     return this;
   }
 
-  async single(recordId: string): Promise<{
-    data: FileMakerRecord<FMDatabase['Table'][T]['row']['fields']> | null;
-    error: Error | null;
-  }> {
+  async single(recordId: string): Promise<FileMakerDataResponse> {
     try {
-      const result = (await this.client.sendGet(
+      const result = await this.client.sendGet(
         `layouts/${this.layoutName}/records/${recordId}`
-      )) as FileMakerDataResponse<FMDatabase['Table'][T]['row']['fields']>;
-      return {
-        data: result.response?.data?.[0] || null,
-        error: null,
+      );
+
+      const typedResponse: FileMakerDataResponse = {
+        messages: result.messages,
+        response: {
+          dataInfo: result.response.dataInfo,
+          data: result.response.data?.map((record: any) => ({
+            fieldData: record.fieldData,
+            recordId: record.recordId,
+            modId: record.modId,
+            portalData: record.portalData,
+          })),
+        },
       };
-    } catch (error) {
-      return { data: null, error: error as Error };
+
+      return typedResponse;
+    } catch {
+      return {
+        messages: [
+          { code: 'error', message: 'データが取得できませんでした。' },
+        ],
+        response: { data: [] },
+      };
     }
   }
 
-  async then(
-    resolve: (
-      value: FileMakerDataResponse<FMDatabase['Table'][T]['row']['fields']>
-    ) => void
-  ): Promise<void> {
+  async then(resolve: (value: FileMakerDataResponse) => void): Promise<void> {
     try {
       const params = new URLSearchParams();
       if (this.startRecord)
@@ -254,12 +256,22 @@ class GetBuilder<T extends keyof FMDatabase['Table']> {
 
       const url = `layouts/${this.layoutName}/records`;
 
-      const result = (await this.client.sendGet(
-        url,
-        undefined,
-        params
-      )) as FileMakerDataResponse<FMDatabase['Table'][T]['row']['fields']>;
-      resolve(result);
+      const result = await this.client.sendGet(url, undefined, params);
+
+      const typedResponse: FileMakerDataResponse = {
+        messages: result.messages,
+        response: {
+          dataInfo: result.response.dataInfo,
+          data: result.response.data?.map((record: any) => ({
+            fieldData: record.fieldData,
+            recordId: record.recordId,
+            modId: record.modId,
+            portalData: record.portalData,
+          })),
+        },
+      };
+
+      resolve(typedResponse);
     } catch (error) {
       resolve({
         messages: [{ code: 'error', message: (error as Error).message }],
@@ -389,18 +401,18 @@ export default class FileMakerClient {
     return this.defaultDatabase;
   }
 
-  public async sendGet<T>(
+  public async sendGet(
     path: string,
     body?: unknown,
     params?: URLSearchParams
-  ): Promise<FileMakerDataResponse<T>> {
-    const response = await this.request<FileMakerDataResponse<T>>(
+  ): Promise<FileMakerDataResponse> {
+    const response = await this.request<FileMakerDataResponse>(
       'GET',
       path,
       body,
       params
     );
-    return response as FileMakerDataResponse<T>;
+    return response;
   }
 
   public async sendPost<T extends FileMakerBaseResponse>(
@@ -408,7 +420,7 @@ export default class FileMakerClient {
     body?: unknown
   ): Promise<T> {
     const response = await this.request<T>('POST', path, body);
-    return response as T;
+    return response;
   }
 
   public async sendPatch(
@@ -420,7 +432,7 @@ export default class FileMakerClient {
       path,
       body
     );
-    return response as FileMakerModifyResponse;
+    return response;
   }
 
   public async sendDelete(path: string): Promise<FileMakerDeleteResponse> {
@@ -428,7 +440,7 @@ export default class FileMakerClient {
       'DELETE',
       path
     );
-    return response as FileMakerDeleteResponse;
+    return response;
   }
 
   private async request<T extends FileMakerBaseResponse>(
@@ -461,7 +473,13 @@ export default class FileMakerClient {
       headers,
       body:
         method === 'POST' && !body
-          ? JSON.stringify({})
+          ? JSON.stringify({
+              fieldData: {},
+              response: {
+                recordId: '0',
+                modId: '0',
+              },
+            })
           : body
           ? JSON.stringify(body)
           : undefined,
@@ -477,7 +495,8 @@ export default class FileMakerClient {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
 
-    return await response.json();
+    const data = await response.json();
+    return data as T;
   }
 
   /**
@@ -535,12 +554,12 @@ export default class FileMakerClient {
   async findUser(username: string): Promise<FileMakerUserResponse | null> {
     try {
       const response = await this.sendPost<
-        FileMakerDataResponse<UserFieldData>
+        FileMakerDataResponse<FileMakerUserFields>
       >(`layouts/users/_find`, {
         query: [{ name: username }],
       });
-      const userData = response.response?.data?.[0];
 
+      const userData = response.response?.data?.[0];
       if (!userData?.fieldData) return null;
 
       return {
@@ -570,7 +589,7 @@ export default class FileMakerClient {
 
       // ユーザーの作成
       const response = await this.sendPost<
-        FileMakerDataResponse<UserFieldData>
+        FileMakerDataResponse<FileMakerUserFields>
       >(`layouts/users/records`, {
         fieldData: {
           name: username,
