@@ -4,18 +4,18 @@ import Test from './components/test';
 
 export default async function FileMaker() {
   const client = getFileMakerClient();
-  const result = await client.get('users').single('2');
 
-  if (!result) {
+  // fieldDataを直接取得
+  const userData = await client.get('users').then();
+
+  if (!userData) {
     return <div>データが取得できませんでした。</div>;
   }
-
-  console.log('result', result);
 
   return (
     <div>
       <SignOutButton />
-      <Test data={result} />
+      <Test data={userData} />
     </div>
   );
 }

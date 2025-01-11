@@ -1,4 +1,4 @@
-import { FMDatabase, FMScriptName } from '@/types/filemaker/schema';
+import { FMDatabase } from '@/types/filemaker/schema';
 import { FileMakerAuth } from './FileMakerAuth';
 import bcrypt from 'bcryptjs';
 
@@ -95,25 +95,31 @@ export interface FileMakerDataResponse<T = Record<string, unknown>>
 }
 
 // レコード作成・更新時のレスポンス型
-export interface FileMakerModifyResponse extends FileMakerBaseResponse {
-  response?: {
-    recordId?: string;
-    modId?: string;
-    scriptResult?: string;
-    scriptError?: string;
-  };
+export interface FileMakerModifyResponseData {
+  recordId?: string;
+  modId?: string;
+  scriptResult?: string;
+  scriptError?: string;
 }
 
-// 削除時のレスポンス型
+export interface FileMakerModifyResponse extends FileMakerBaseResponse {
+  response: FileMakerModifyResponseData;
+}
+
+// 削除時のレスポンス型を復活
 export interface FileMakerDeleteResponse extends FileMakerBaseResponse {
   response: Record<string, never>;
 }
+
+// FMScriptNameの型を定義
+type FMScriptName = FMDatabase['Script']['script'][number]['name'];
 
 class QueryBuilder<T extends keyof FMDatabase['Table']> {
   private layoutName: T;
   private dbName: string;
   private client: FileMakerClient;
   private sortOptions: SortOption[] = [];
+  private conditions: Partial<FMDatabase['Table'][T]['read']['fieldData']> = {};
 
   constructor(client: FileMakerClient, dbName: string, layoutName: T) {
     this.client = client;
@@ -126,18 +132,53 @@ class QueryBuilder<T extends keyof FMDatabase['Table']> {
     return this;
   }
 
-  async eq(
-    conditions: Partial<FMDatabase['Table'][T]['row']['fields']>
-  ): Promise<FileMakerDataResponse> {
+  eq(conditions: Partial<FMDatabase['Table'][T]['read']['fieldData']>): this {
+    this.conditions = conditions;
+    return this;
+  }
+
+  /**
+   * レスポンス全体を取得
+   */
+  async then(): Promise<
+    FileMakerDataResponse<FMDatabase['Table'][T]['read']['fieldData']>
+  > {
     const query = {
-      query: [conditions],
+      query: [this.conditions],
       ...(this.sortOptions.length > 0 && { sort: this.sortOptions }),
     };
-
     return await this.client.sendPost(
       `layouts/${this.layoutName}/_find`,
       query
     );
+  }
+
+  /**
+   * データ配列のみを取得
+   */
+  async data(): Promise<
+    FileMakerRecord<FMDatabase['Table'][T]['read']['fieldData']>[]
+  > {
+    const response = await this.then();
+    return response.response?.data || [];
+  }
+
+  /**
+   * 最初のレコードのfieldDataを取得
+   */
+  async first(): Promise<
+    FMDatabase['Table'][T]['read']['fieldData'] | undefined
+  > {
+    const response = await this.then();
+    return response.response?.data?.[0]?.fieldData;
+  }
+
+  /**
+   * すべてのレコードのfieldDataを配列で取得
+   */
+  async fields(): Promise<FMDatabase['Table'][T]['read']['fieldData'][]> {
+    const response = await this.then();
+    return response.response?.data?.map((record) => record.fieldData) || [];
   }
 }
 
@@ -243,7 +284,9 @@ class GetBuilder<T extends keyof FMDatabase['Table']> {
     }
   }
 
-  async then(resolve: (value: FileMakerDataResponse) => void): Promise<void> {
+  async then(): Promise<
+    FileMakerDataResponse<FMDatabase['Table'][T]['read']['fieldData']>
+  > {
     try {
       const params = new URLSearchParams();
       if (this.startRecord)
@@ -255,10 +298,9 @@ class GetBuilder<T extends keyof FMDatabase['Table']> {
       }
 
       const url = `layouts/${this.layoutName}/records`;
-
       const result = await this.client.sendGet(url, undefined, params);
 
-      const typedResponse: FileMakerDataResponse = {
+      return {
         messages: result.messages,
         response: {
           dataInfo: result.response.dataInfo,
@@ -270,30 +312,70 @@ class GetBuilder<T extends keyof FMDatabase['Table']> {
           })),
         },
       };
-
-      resolve(typedResponse);
     } catch (error) {
-      resolve({
+      return {
         messages: [{ code: 'error', message: (error as Error).message }],
         response: { data: [] },
-      });
+      };
     }
+  }
+
+  /**
+   * データ配列のみを取得
+   */
+  async data(): Promise<
+    FileMakerRecord<FMDatabase['Table'][T]['read']['fieldData']>[]
+  > {
+    const response = await this.then();
+    return response.response?.data || [];
+  }
+
+  /**
+   * 最初のレコードのfieldDataを取得
+   */
+  async first(): Promise<
+    FMDatabase['Table'][T]['read']['fieldData'] | undefined
+  > {
+    const response = await this.then();
+    return response.response?.data?.[0]?.fieldData;
+  }
+
+  /**
+   * すべてのレコードのfieldDataを配列で取得
+   */
+  async fields(): Promise<FMDatabase['Table'][T]['read']['fieldData'][]> {
+    const response = await this.then();
+    return response.response?.data?.map((record) => record.fieldData) || [];
   }
 }
 
 class PostBuilder<T extends keyof FMDatabase['Table']> {
-  private layoutName: T;
-  private dbName: string;
-  private client: FileMakerClient;
-  private scriptOptions: ScriptOptions = {};
-  private data: Record<string, unknown>;
+  private readonly layoutName: T;
+  private readonly dbName: string;
+  private readonly client: FileMakerClient;
+  private readonly scriptOptions: ScriptOptions = {};
+  private readonly data: {
+    fieldData: FMDatabase['Table'][T]['create']['fieldData'];
+    portalData?: FMDatabase['Table'][T]['create'] extends {
+      portalData: infer P;
+    }
+      ? P
+      : never;
+  };
   private dateformatOption?: number;
 
   constructor(
     client: FileMakerClient,
     dbName: string,
     layoutName: T,
-    data: Record<string, unknown>
+    data: {
+      fieldData: FMDatabase['Table'][T]['create']['fieldData'];
+      portalData?: FMDatabase['Table'][T]['create'] extends {
+        portalData: infer P;
+      }
+        ? P
+        : never;
+    }
   ) {
     this.client = client;
     this.dbName = dbName;
@@ -321,44 +403,38 @@ class PostBuilder<T extends keyof FMDatabase['Table']> {
     return this;
   }
 
-  async then(resolve: (value: FileMakerModifyResponse) => void): Promise<void> {
-    try {
-      if (!this.data || Object.keys(this.data).length === 0) {
-        throw new Error('Request body cannot be empty');
-      }
+  async then(): Promise<FileMakerModifyResponse> {
+    const url = `layouts/${this.layoutName}/records`;
+    const requestBody = {
+      fieldData: this.data.fieldData,
+      ...(this.data.portalData && { portalData: this.data.portalData }),
+      ...(typeof this.dateformatOption === 'number' && {
+        dateformats: this.dateformatOption,
+      }),
+      ...this.buildScriptOptions(),
+    };
 
-      const url = `layouts/${this.layoutName}/records`;
+    return await this.client.sendPost<FileMakerModifyResponse>(
+      url,
+      requestBody
+    );
+  }
 
-      const requestBody: Record<string, unknown> = {
-        ...(typeof this.dateformatOption === 'number' && {
-          dateformats: this.dateformatOption,
-        }),
-        ...this.data,
-        ...(this.scriptOptions.script && {
-          script: this.scriptOptions.script.name,
-          'script.param': this.scriptOptions.script.param,
-        }),
-        ...(this.scriptOptions.scriptPreRequest && {
-          'script.prerequest': this.scriptOptions.scriptPreRequest.name,
-          'script.prerequest.param': this.scriptOptions.scriptPreRequest.param,
-        }),
-        ...(this.scriptOptions.scriptPreSort && {
-          'script.presort': this.scriptOptions.scriptPreSort.name,
-          'script.presort.param': this.scriptOptions.scriptPreSort.param,
-        }),
-      };
-
-      const result = await this.client.sendPost<FileMakerModifyResponse>(
-        url,
-        requestBody
-      );
-      resolve(result);
-    } catch (error) {
-      resolve({
-        messages: [{ code: 'error', message: (error as Error).message }],
-        response: {},
-      });
-    }
+  private buildScriptOptions(): Record<string, unknown> {
+    return {
+      ...(this.scriptOptions.script && {
+        script: this.scriptOptions.script.name,
+        'script.param': this.scriptOptions.script.param,
+      }),
+      ...(this.scriptOptions.scriptPreRequest && {
+        'script.prerequest': this.scriptOptions.scriptPreRequest.name,
+        'script.prerequest.param': this.scriptOptions.scriptPreRequest.param,
+      }),
+      ...(this.scriptOptions.scriptPreSort && {
+        'script.presort': this.scriptOptions.scriptPreSort.name,
+        'script.presort.param': this.scriptOptions.scriptPreSort.param,
+      }),
+    };
   }
 }
 
@@ -512,7 +588,14 @@ export default class FileMakerClient {
 
   post<T extends keyof FMDatabase['Table']>(
     layoutName: T,
-    data: Record<string, unknown>
+    data: {
+      fieldData: FMDatabase['Table'][T]['create']['fieldData'];
+      portalData?: FMDatabase['Table'][T]['create'] extends {
+        portalData: infer P;
+      }
+        ? P
+        : never;
+    }
   ) {
     return new PostBuilder<T>(this, this.defaultDatabase, layoutName, data);
   }
@@ -530,15 +613,24 @@ export default class FileMakerClient {
         new QueryBuilder<T>(this, targetDb, layoutName),
       post: <T extends keyof FMDatabase['Table']>(
         layoutName: T,
-        data: Record<string, unknown>
+        data: {
+          fieldData: FMDatabase['Table'][T]['create']['fieldData'];
+          portalData?: FMDatabase['Table'][T]['create'] extends {
+            portalData: infer P;
+          }
+            ? P
+            : never;
+        }
       ) => new PostBuilder<T>(this, targetDb, layoutName, data),
       update: <T extends keyof FMDatabase['Table']>(
         layoutName: T,
         recordId: string,
-        data: Record<string, unknown>
+        data: {
+          fieldData: FMDatabase['Table'][T]['update']['fieldData'];
+        }
       ) =>
         this.sendPatch(`layouts/${layoutName}/records/${recordId}`, {
-          fieldData: data,
+          fieldData: data.fieldData,
         }),
       copy: <T extends keyof FMDatabase['Table']>(
         layoutName: T,

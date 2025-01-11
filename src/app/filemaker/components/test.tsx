@@ -1,31 +1,44 @@
 'use client';
-import {
-  FileMakerDataResponse,
-  FileMakerModifyResponse,
-  FileMakerRecord,
-} from '@/lib/filemaker/FileMakerClient';
-import { FMDatabase } from '@/types/filemaker/schema';
+import { FileMakerDataResponse } from '@/lib/filemaker/FileMakerClient';
 import { useState } from 'react';
 import { test } from '../action';
+import { FMDatabase } from '@/types/filemaker/schema';
 
-const damyData: FileMakerRecord<
-  FMDatabase['Table']['entry']['insert']['fields']
-> = {
+const damyData = {
   fieldData: {
-    pk: 'abcdefgdfsfsfsfsd',
-    fk_cow_pk: 'abcdefg',
+    pk: 'abcdefg',
+    _fk_owner_pk: 'abcdefg',
     owner_id: 15,
     date: '2025/01/09',
     cow_code: '1234567899',
+    owner_name: null,
+    cow_number: null,
+    cow_id: null,
+    label: null,
   },
-};
+  portalData: {
+    'entry|cows': [
+      {
+        pk: 'abcdefg',
+        _fk_owner_pk: 'abcdefg',
+        owner_id: 15,
+        cow_code: '1234567899',
+        owner_name: null,
+        cow_number: null,
+        cow_id: null,
+        label: null,
+      },
+    ],
+  },
+} as FMDatabase['Table']['entry']['create'];
+interface Props {
+  data: FileMakerDataResponse<
+    FMDatabase['Table']['users']['read']['fieldData']
+  >;
+}
 
-export default function Test({
-  data,
-}: {
-  data?: FileMakerDataResponse<Record<string, unknown>>;
-}) {
-  const [res, setRes] = useState<FileMakerModifyResponse>();
+export default function Test({ data }: Props) {
+  const [res, setRes] = useState<any>();
 
   const handleTest = async () => {
     const response = await test(damyData);
@@ -42,6 +55,12 @@ export default function Test({
       <div className='flex flex-col gap-4'>
         <pre>{JSON.stringify(res, null, 2)}</pre>
         <pre>{JSON.stringify(data, null, 2)}</pre>
+        <div>
+          <ul>
+            {/* usersの中身を明示的にしレコードを表示 */}
+            {data && <li>{data.response?.data?.[2]?.fieldData.id}</li>}
+          </ul>
+        </div>
       </div>
     </div>
   );
