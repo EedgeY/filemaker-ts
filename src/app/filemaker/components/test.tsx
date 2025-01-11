@@ -1,7 +1,7 @@
 'use client';
 import { FileMakerDataResponse } from '@/lib/filemaker/FileMakerClient';
 import { useState } from 'react';
-import { test } from '../action';
+import { createEntry } from '../action';
 import { FMDatabase } from '@/types/filemaker/schema';
 
 const damyData = {
@@ -41,7 +41,7 @@ export default function Test({ data }: Props) {
   const [res, setRes] = useState<any>();
 
   const handleTest = async () => {
-    const response = await test(damyData);
+    const response = await createEntry(damyData);
     if (response.messages[0].message !== 'OK') {
       console.log(response.messages[0].message);
       alert(response.messages[0].message);

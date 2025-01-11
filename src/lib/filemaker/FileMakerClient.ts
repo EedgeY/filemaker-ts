@@ -157,10 +157,10 @@ class QueryBuilder<T extends keyof FMDatabase['Table']> {
    * データ配列のみを取得
    */
   async data(): Promise<
-    FileMakerRecord<FMDatabase['Table'][T]['read']['fieldData']>[]
+    FileMakerDataResponse<FMDatabase['Table'][T]['read']['fieldData']>
   > {
     const response = await this.then();
-    return response.response?.data || [];
+    return response;
   }
 
   /**
@@ -254,13 +254,19 @@ class GetBuilder<T extends keyof FMDatabase['Table']> {
     return this;
   }
 
-  async single(recordId: string): Promise<FileMakerDataResponse> {
+  async single(
+    recordId: string
+  ): Promise<
+    FileMakerDataResponse<FMDatabase['Table'][T]['read']['fieldData']>
+  > {
     try {
       const result = await this.client.sendGet(
         `layouts/${this.layoutName}/records/${recordId}`
       );
 
-      const typedResponse: FileMakerDataResponse = {
+      const typedResponse: FileMakerDataResponse<
+        FMDatabase['Table'][T]['read']['fieldData']
+      > = {
         messages: result.messages,
         response: {
           dataInfo: result.response.dataInfo,
@@ -289,10 +295,12 @@ class GetBuilder<T extends keyof FMDatabase['Table']> {
   > {
     try {
       const params = new URLSearchParams();
-      if (this.startRecord)
+      if (this.startRecord !== undefined) {
         params.append('_offset', this.startRecord.toString());
-      if (this.limitRecords)
+      }
+      if (this.limitRecords !== undefined) {
         params.append('_limit', this.limitRecords.toString());
+      }
       if (this.sortOptions.length > 0) {
         params.append('_sort', JSON.stringify(this.sortOptions));
       }
@@ -324,10 +332,10 @@ class GetBuilder<T extends keyof FMDatabase['Table']> {
    * データ配列のみを取得
    */
   async data(): Promise<
-    FileMakerRecord<FMDatabase['Table'][T]['read']['fieldData']>[]
+    FileMakerDataResponse<FMDatabase['Table'][T]['read']['fieldData']>
   > {
     const response = await this.then();
-    return response.response?.data || [];
+    return response;
   }
 
   /**
@@ -497,6 +505,31 @@ export default class FileMakerClient {
   ): Promise<T> {
     const response = await this.request<T>('POST', path, body);
     return response;
+  }
+
+  public async patch<T extends keyof FMDatabase['Table']>(
+    layoutName: T,
+    recordId: string,
+    data: {
+      fieldData: FMDatabase['Table'][T]['update']['fieldData'];
+      portalData?: FMDatabase['Table'][T]['create'] extends {
+        portalData: infer P;
+      }
+        ? P
+        : never;
+    }
+  ): Promise<FileMakerModifyResponse> {
+    return this.sendPatch(`layouts/${layoutName}/records/${recordId}`, {
+      fieldData: data.fieldData,
+      ...(data.portalData && { portalData: data.portalData }),
+    });
+  }
+
+  public async delete<T extends keyof FMDatabase['Table']>(
+    layoutName: T,
+    recordId: string
+  ): Promise<FileMakerDeleteResponse> {
+    return this.sendDelete(`layouts/${layoutName}/records/${recordId}`);
   }
 
   public async sendPatch(
