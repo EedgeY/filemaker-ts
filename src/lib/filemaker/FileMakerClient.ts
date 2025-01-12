@@ -556,56 +556,81 @@ export default class FileMakerClient {
     method: string,
     path: string,
     body?: unknown,
-    params?: URLSearchParams
+    params?: URLSearchParams,
+    retryCount = 0
   ): Promise<T> {
-    const jwtToken = this.auth.generateToken();
-    if (!this.auth.verifyToken(jwtToken)) {
-      throw new Error('JWT認証に失敗しました。');
-    }
+    try {
+      const filemakerToken = await this.auth.getFileMakerToken(
+        this.currentDatabase
+      );
 
-    const filemakerToken = await this.auth.getFileMakerToken(
-      this.currentDatabase
-    );
+      const jwtToken = this.auth.generateToken();
+      if (!this.auth.verifyToken(jwtToken)) {
+        throw new Error('JWT認証に失敗しました。');
+      }
 
-    const headers = {
-      ...this.headers,
-      Authorization: `Bearer ${filemakerToken}`,
-      'Content-Type': 'application/json',
-    };
+      const headers = {
+        ...this.headers,
+        Authorization: `Bearer ${filemakerToken}`,
+        'Content-Type': 'application/json',
+      };
 
-    const requestUrl = `${this.filemakerUrl}/${this.currentDatabase}/${path}${
-      params?.toString() ? '?' + params.toString() : ''
-    }`;
+      const requestUrl = `${this.filemakerUrl}/${this.currentDatabase}/${path}${
+        params?.toString() ? '?' + params.toString() : ''
+      }`;
 
-    const response = await this.fetch(requestUrl, {
-      method,
-      headers,
-      body:
-        method === 'POST' && !body
-          ? JSON.stringify({
-              fieldData: {},
-              response: {
-                recordId: '0',
-                modId: '0',
-              },
-            })
-          : body
-          ? JSON.stringify(body)
-          : undefined,
-      credentials: 'include',
-    });
-
-    if (!response.ok) {
-      console.error('[FileMaker] レスポンスエラー:', {
-        status: response.status,
-        statusText: response.statusText,
-        url: requestUrl,
+      const response = await this.fetch(requestUrl, {
+        method,
+        headers,
+        body:
+          method === 'POST' && !body
+            ? JSON.stringify({
+                fieldData: {},
+                response: {
+                  recordId: '0',
+                  modId: '0',
+                },
+              })
+            : body
+            ? JSON.stringify(body)
+            : undefined,
+        cache: 'no-store',
+        credentials: 'include',
       });
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
 
-    const data = await response.json();
-    return data as T;
+      if (!response.ok) {
+        let errorMessage = `FileMaker API Error: ${response.status} - ${response.statusText}`;
+        try {
+          const errorData = await response.json();
+          errorMessage += ` - ${
+            errorData.messages?.[0]?.message || 'Unknown error'
+          }`;
+        } catch {
+          errorMessage += ' (JSONレスポンスではありません)';
+        }
+        throw new Error(errorMessage);
+      }
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error('FileMaker APIからのレスポンスがJSONではありません');
+      }
+
+      const data = await response.json();
+
+      if (data.messages?.[0]?.code === '952' && retryCount < 3) {
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem(`filemaker_token_${this.currentDatabase}`);
+        }
+        delete this.auth.tokenCache[this.currentDatabase];
+        await this.auth.getFileMakerToken(this.currentDatabase);
+        return this.request<T>(method, path, body, params, retryCount + 1);
+      }
+
+      return data as T;
+    } catch (error) {
+      throw error;
+    }
   }
 
   /**
@@ -685,7 +710,10 @@ export default class FileMakerClient {
       });
 
       const userData = response.response?.data?.[0];
-      if (!userData?.fieldData) return null;
+      if (!userData?.fieldData) {
+        console.log('findUser: ユーザーデータが見つかりませんでした');
+        return null;
+      }
 
       return {
         id: userData.fieldData._pk,

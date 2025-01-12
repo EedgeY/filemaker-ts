@@ -1,3 +1,4 @@
+import 'server-only';
 import jwt from 'jsonwebtoken';
 
 interface TokenCacheItem {
@@ -14,8 +15,9 @@ export class FileMakerAuth {
   private expiresIn: string | number = '1h';
   private username: string = '';
   private password: string = '';
-  private tokenCache: TokenCache = {};
-  private readonly TOKEN_EXPIRY_TIME = 15 * 60 * 1000; // 15分
+  public tokenCache: TokenCache = {};
+  private readonly TOKEN_EXPIRY_TIME = 50 * 60 * 1000; // 50分
+  private tokenRequestPromises: { [key: string]: Promise<string> } = {};
 
   constructor({ secret }: { secret: string }) {
     this.secret = secret;
@@ -60,82 +62,105 @@ export class FileMakerAuth {
     };
   }
 
-  async getFileMakerToken(dbName: string): Promise<string> {
+  private isTokenValid(cached: TokenCacheItem): boolean {
     const now = Date.now();
-    const cached = this.tokenCache[dbName];
+    return cached && now < cached.expiresAt - 60000; // 1分のバッファを追加
+  }
 
-    // キャッシュされたトークンが有効な場合
-    if (cached && now < cached.expiresAt - this.TOKEN_EXPIRY_TIME) {
-      // 1分のバッファを追加
+  private getStoredToken(dbName: string): TokenCacheItem | null {
+    if (typeof window === 'undefined') return null;
+
+    const stored = localStorage.getItem(`filemaker_token_${dbName}`);
+    if (!stored) return null;
+
+    try {
+      return JSON.parse(stored) as TokenCacheItem;
+    } catch {
+      return null;
+    }
+  }
+
+  private storeToken(dbName: string, token: TokenCacheItem) {
+    if (typeof window === 'undefined') return;
+
+    localStorage.setItem(`filemaker_token_${dbName}`, JSON.stringify(token));
+  }
+
+  async getFileMakerToken(dbName: string): Promise<string> {
+    // 既存のトークンリクエストがある場合は再利用
+    if (dbName in this.tokenRequestPromises) {
+      try {
+        return await this.tokenRequestPromises[dbName];
+      } catch {
+        delete this.tokenRequestPromises[dbName];
+      }
+    }
+
+    const now = Date.now();
+
+    // まずローカルストレージをチェック
+    const storedToken = this.getStoredToken(dbName);
+    if (storedToken && this.isTokenValid(storedToken)) {
+      return storedToken.token;
+    }
+
+    // メモリキャッシュをチェック
+    const cached = this.tokenCache[dbName];
+    if (cached && this.isTokenValid(cached)) {
+      return cached.token;
+    }
+
+    // 新しいトークン取得処理
+    this.tokenRequestPromises[dbName] = (async () => {
       try {
         const hostUrl = process.env.NEXT_PUBLIC_FILEMAKER_HOST_URL;
         if (!hostUrl) {
+          throw new Error('FILEMAKER_HOST_URLが設定されていません。');
+        }
+
+        const credentials = btoa(`${this.username}:${this.password}`);
+        const response = await fetch(`${hostUrl}/${dbName}/sessions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Basic ${credentials}`,
+          },
+          body: JSON.stringify({}),
+          cache: 'no-store',
+        });
+
+        if (!response.ok) {
+          if (storedToken && now < storedToken.expiresAt) {
+            return storedToken.token;
+          }
           throw new Error(
-            'NEXT_PUBLIC_FILEMAKER_HOST_URLが設定されていません。'
+            `FileMakerトークンの取得に失敗しました: ${response.status}`
           );
         }
 
-        // トークンの有効性を確認
-        const layoutsUrl = `${hostUrl}/${dbName}/layouts`;
-        const response = await fetch(layoutsUrl, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${cached.token}`,
-          },
-        });
+        const data = await response.json();
+        const newToken = data.response.token;
+        const tokenData = {
+          token: newToken,
+          expiresAt: now + this.TOKEN_EXPIRY_TIME,
+        };
 
-        if (response.ok) {
-          return cached.token;
-        }
+        // メモリとローカルストレージの両方にキャッシュ
+        this.tokenCache[dbName] = tokenData;
+        this.storeToken(dbName, tokenData);
+
+        return newToken;
       } catch (error) {
-        console.warn('キャッシュされたトークンの検証に失敗しました:', error);
+        if (storedToken && now < storedToken.expiresAt) {
+          return storedToken.token;
+        }
+        throw error;
+      } finally {
+        delete this.tokenRequestPromises[dbName];
       }
-    }
+    })();
 
-    // 新しいトークンを取得
-    try {
-      const hostUrl = process.env.NEXT_PUBLIC_FILEMAKER_HOST_URL;
-      if (!hostUrl) {
-        throw new Error('FILEMAKER_HOST_URLが設定されていません。');
-      }
-
-      const credentials = btoa(`${this.username}:${this.password}`);
-      const sessionsUrl = `${hostUrl}/${dbName}/sessions`;
-      const response = await fetch(sessionsUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Basic ${credentials}`,
-        },
-        body: JSON.stringify({}),
-      });
-
-      if (!response.ok) {
-        console.error('[FileMaker] トークン取得エラー:', {
-          status: response.status,
-          statusText: response.statusText,
-          url: sessionsUrl,
-        });
-        throw new Error(
-          `FileMakerトークンの取得に失敗しました: ${response.status}`
-        );
-      }
-
-      const data = await response.json();
-      const newToken = data.response.token;
-
-      // キャッシュを更新
-      this.tokenCache[dbName] = {
-        token: newToken,
-        expiresAt: now + this.TOKEN_EXPIRY_TIME,
-      };
-
-      return newToken;
-    } catch (error) {
-      console.error('新しいFileMakerトークンの取得に失敗しました:', error);
-      throw error;
-    }
+    return await this.tokenRequestPromises[dbName];
   }
 
   async getToken(): Promise<string> {

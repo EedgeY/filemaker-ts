@@ -11,33 +11,68 @@ export default function LoginPage() {
   const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
+    console.log('handleSubmit が呼び出されました');
     e.preventDefault();
     setError('');
 
-    try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ username, password }),
-      });
+    if (isLogin) {
+      try {
+        console.log('fetch 前:', { username, password });
+        const response = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ username, password }),
+        });
+        console.log('fetch 後:', response);
 
-      const data = await response.json();
+        const data = await response.json();
 
-      if (!data.success) {
-        throw new Error(data.error);
+        console.log(data);
+
+        if (!data.success) {
+          throw new Error(data.error);
+        }
+
+        router.push('/filemaker');
+      } catch (error) {
+        setError(
+          error instanceof Error
+            ? error.message
+            : isLogin
+            ? 'ログインに失敗しました'
+            : '登録に失敗しました'
+        );
       }
+    } else {
+      //signup
+      console.log('signup');
 
-      router.push('/filemaker');
-    } catch (error) {
-      setError(
-        error instanceof Error
-          ? error.message
-          : isLogin
-          ? 'ログインに失敗しました'
-          : '登録に失敗しました'
-      );
+      try {
+        const response = await fetch('/api/auth/signup', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ username, password }),
+        });
+
+        const data = await response.json();
+        console.log(data);
+        if (!data.success) {
+          throw new Error(data.error);
+        }
+        router.push('/filemaker');
+      } catch (error) {
+        setError(
+          error instanceof Error
+            ? error.message
+            : isLogin
+            ? 'ログインに失敗しました'
+            : '登録に失敗しました'
+        );
+      }
     }
   };
 

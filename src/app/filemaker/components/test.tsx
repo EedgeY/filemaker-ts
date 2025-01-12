@@ -3,34 +3,16 @@ import { FileMakerDataResponse } from '@/lib/filemaker/FileMakerClient';
 import { useState } from 'react';
 import { createEntry } from '../action';
 import { FMDatabase } from '@/types/filemaker/schema';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { v4 as uuidv4 } from 'uuid';
 
-const damyData = {
-  fieldData: {
-    pk: 'abcdefg',
-    _fk_owner_pk: 'abcdefg',
-    owner_id: 15,
-    date: '2025/01/09',
-    cow_code: '1234567899',
-    owner_name: null,
-    cow_number: null,
-    cow_id: null,
-    label: null,
-  },
-  portalData: {
-    'entry|cows': [
-      {
-        pk: 'abcdefg',
-        _fk_owner_pk: 'abcdefg',
-        owner_id: 15,
-        cow_code: '1234567899',
-        owner_name: null,
-        cow_number: null,
-        cow_id: null,
-        label: null,
-      },
-    ],
-  },
-} as FMDatabase['Table']['entry']['create'];
 interface Props {
   data: FileMakerDataResponse<
     FMDatabase['Table']['users']['read']['fieldData']
@@ -39,6 +21,19 @@ interface Props {
 
 export default function Test({ data }: Props) {
   const [res, setRes] = useState<any>();
+  const [uuid, setUuid] = useState<string>(uuidv4());
+  const [random, setRandom] = useState<number>(
+    Math.floor(Math.random() * 10000000000)
+  );
+
+  const damyData = {
+    fieldData: {
+      pk: uuid,
+      owner_id: 15,
+      date: '2025/01/09',
+      cow_code: random.toString(),
+    },
+  } as FMDatabase['Table']['entry']['create'];
 
   const handleTest = async () => {
     const response = await createEntry(damyData);
@@ -48,19 +43,33 @@ export default function Test({ data }: Props) {
       return;
     }
     setRes(response);
+
+    setUuid(uuidv4());
+    setRandom(Math.floor(Math.random() * 10000000000));
   };
   return (
-    <div>
+    <div className='space-y-4'>
       <button onClick={handleTest}>test</button>
-      <div className='flex flex-col gap-4'>
-        <pre>{JSON.stringify(res, null, 2)}</pre>
-        <pre>{JSON.stringify(data, null, 2)}</pre>
-        <div>
-          <ul>
-            {/* usersの中身を明示的にしレコードを表示 */}
-            {data && <li>{data.response?.data?.[2]?.fieldData.id}</li>}
-          </ul>
-        </div>
+      <div className='border rounded-md overflow-x-auto'>
+        <pre className='p-4'>{JSON.stringify(res, null, 2)}</pre>
+      </div>
+      <div className='border rounded-md'>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>ID</TableHead>
+              <TableHead>Name</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {data.response?.data?.map((item, index) => (
+              <TableRow key={index}>
+                <TableCell>{item.fieldData.id}</TableCell>
+                <TableCell>{item.fieldData.name}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       </div>
     </div>
   );
