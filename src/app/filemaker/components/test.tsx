@@ -11,7 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { v4 as uuidv4 } from 'uuid';
+// import { v4 as uuidv4 } from 'uuid';
 
 interface Props {
   data: FileMakerDataResponse<
@@ -21,19 +21,21 @@ interface Props {
 
 export default function Test({ data }: Props) {
   const [res, setRes] = useState<any>();
-  const [uuid, setUuid] = useState<string>(uuidv4());
+
   const [random, setRandom] = useState<number>(
     Math.floor(Math.random() * 10000000000)
   );
 
   const damyData = {
     fieldData: {
-      pk: uuid,
-      owner_id: 15,
-      date: '2025/01/09',
-      cow_code: random.toString(),
+      title: 'test',
+      content: 'test',
+      image:
+        'https://pbs.twimg.com/media/GhF3AVwWwAAVKCO?format=jpg&name=small',
+      creator_pk: 'test',
+      id: random,
     },
-  } as FMDatabase['Table']['entry']['create'];
+  } as FMDatabase['Table']['blog']['create'];
 
   const handleTest = async () => {
     const response = await createEntry(damyData);
@@ -44,9 +46,9 @@ export default function Test({ data }: Props) {
     }
     setRes(response);
 
-    setUuid(uuidv4());
     setRandom(Math.floor(Math.random() * 10000000000));
   };
+
   return (
     <div className='space-y-4'>
       <button onClick={handleTest}>test</button>

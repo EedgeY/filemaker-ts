@@ -5,18 +5,15 @@ import { FileMakerModifyResponse } from '@/lib/filemaker/FileMakerClient';
 import { FMDatabase } from '@/types/filemaker/schema';
 
 export async function createEntry(value: {
-  fieldData: FMDatabase['Table']['entry']['create']['fieldData'];
-  portalData: FMDatabase['Table']['entry']['create']['portalData'];
+  fieldData: FMDatabase['Table']['blog']['create']['fieldData'];
 }): Promise<FileMakerModifyResponse> {
   const filemaker = getFileMakerClient();
 
   const response = await filemaker
-    .post('entry', {
+    .post('blog', {
       fieldData: value.fieldData,
-      portalData: value.portalData,
     })
     .dateformat(1)
-    .script('test', 'test')
     .then();
 
   return response;
@@ -25,14 +22,13 @@ export async function createEntry(value: {
 export async function updateEntry(
   recordId: string,
   value: {
-    fieldData: FMDatabase['Table']['entry']['update']['fieldData'];
-    portalData: FMDatabase['Table']['entry']['update']['portalData'];
+    fieldData: FMDatabase['Table']['blog']['update']['fieldData'];
   }
 ): Promise<FileMakerModifyResponse> {
   const filemaker = getFileMakerClient();
 
   const response = await filemaker
-    .patch('entry', recordId, {
+    .patch('blog', recordId, {
       fieldData: value.fieldData,
     })
     .then();
@@ -45,7 +41,7 @@ export async function deleteEntry(
 ): Promise<FileMakerModifyResponse> {
   const filemaker = getFileMakerClient();
 
-  const response = await filemaker.delete('entry', recordId).then();
+  const response = await filemaker.delete('blog', recordId).then();
 
   return response;
 }

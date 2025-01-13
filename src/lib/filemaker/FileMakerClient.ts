@@ -120,6 +120,8 @@ class QueryBuilder<T extends keyof FMDatabase['Table']> {
   private client: FileMakerClient;
   private sortOptions: SortOption[] = [];
   private conditions: Partial<FMDatabase['Table'][T]['read']['fieldData']> = {};
+  private limitRecords?: number;
+  private offsetRecords?: number;
 
   constructor(client: FileMakerClient, dbName: string, layoutName: T) {
     this.client = client;
@@ -138,6 +140,24 @@ class QueryBuilder<T extends keyof FMDatabase['Table']> {
   }
 
   /**
+   * 取得するレコード数を制限
+   * @param limit 取得するレコードの最大数
+   */
+  limit(limit: number): this {
+    this.limitRecords = limit;
+    return this;
+  }
+
+  /**
+   * 開始レコードを指定
+   * @param offset スキップするレコード数
+   */
+  offset(offset: number): this {
+    this.offsetRecords = offset;
+    return this;
+  }
+
+  /**
    * レスポンス全体を取得
    */
   async then(): Promise<
@@ -146,6 +166,12 @@ class QueryBuilder<T extends keyof FMDatabase['Table']> {
     const query = {
       query: [this.conditions],
       ...(this.sortOptions.length > 0 && { sort: this.sortOptions }),
+      ...(this.limitRecords !== undefined && {
+        limit: this.limitRecords.toString(),
+      }),
+      ...(this.offsetRecords !== undefined && {
+        offset: this.offsetRecords.toString(),
+      }),
     };
     return await this.client.sendPost(
       `layouts/${this.layoutName}/_find`,
@@ -453,6 +479,92 @@ export default class FileMakerClient {
   protected auth: FileMakerAuth;
   private defaultDatabase: string;
   private currentDatabase: string;
+
+  private async fetchImageAsBase64(imageUrl: string): Promise<string | null> {
+    if (!imageUrl) {
+      console.log('画像URLが指定されていません');
+      return null;
+    }
+
+    try {
+      const filemakerToken = await this.auth.getFileMakerToken(
+        this.currentDatabase
+      );
+      const response = await this.fetch(imageUrl, {
+        headers: {
+          Authorization: `Bearer ${filemakerToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`画像の取得に失敗しました: ${response.status}`);
+      }
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.startsWith('image/')) {
+        throw new Error('取得したデータが画像ではありません');
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+        throw new Error('画像データが空です');
+      }
+
+      const buffer = Buffer.from(arrayBuffer);
+      return `data:${contentType};base64,${buffer.toString('base64')}`;
+    } catch (error) {
+      console.error('画像取得エラー:', error);
+      return null;
+    }
+  }
+
+  async getContainerFieldAsBase64(url: string): Promise<string | null> {
+    try {
+      const imageUrl = `${url}`;
+      return await this.fetchImageAsBase64(imageUrl);
+    } catch (error) {
+      console.error('画像取得エラー:', error);
+      return null;
+    }
+  }
+
+  async uploadContainerField(
+    layoutName: string,
+    recordId: string,
+    fieldName: string,
+    base64Image: string
+  ): Promise<boolean> {
+    try {
+      // Base64データをBlobに変換
+      const base64Response = await fetch(base64Image);
+      const blob = await base64Response.blob();
+
+      // FormDataを作成
+      const formData = new FormData();
+      formData.append('upload', blob, 'image.jpg');
+
+      const filemakerToken = await this.auth.getFileMakerToken(
+        this.currentDatabase
+      );
+
+      // コンテナフィールドに画像をアップロード
+      const response = await this.fetch(
+        `${this.filemakerUrl}/${this.currentDatabase}/layouts/${layoutName}/records/${recordId}/containers/${fieldName}/1`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${filemakerToken}`,
+          },
+          body: formData,
+        }
+      );
+
+      return response.ok;
+    } catch (error) {
+      console.error('画像アップロードエラー:', error);
+      return false;
+    }
+  }
 
   constructor(options: FileMakerClientOptions) {
     if (!options.auth) {
