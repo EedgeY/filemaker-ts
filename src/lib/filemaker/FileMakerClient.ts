@@ -114,6 +114,12 @@ export interface FileMakerDeleteResponse extends FileMakerBaseResponse {
 // FMScriptNameの型を定義
 type FMScriptName = FMDatabase['Script']['script'][number]['name'];
 
+interface ObjectFieldData {
+  fieldName: string;
+  data: string | Blob;
+  fileName?: string;
+}
+
 class QueryBuilder<T extends keyof FMDatabase['Table']> {
   private layoutName: T;
   private dbName: string;
@@ -397,6 +403,7 @@ class PostBuilder<T extends keyof FMDatabase['Table']> {
       : never;
   };
   private dateformatOption?: number;
+  private objectFields: ObjectFieldData[] = [];
 
   constructor(
     client: FileMakerClient,
@@ -437,21 +444,105 @@ class PostBuilder<T extends keyof FMDatabase['Table']> {
     return this;
   }
 
-  async then(): Promise<FileMakerModifyResponse> {
-    const url = `layouts/${this.layoutName}/records`;
-    const requestBody = {
-      fieldData: this.data.fieldData,
-      ...(this.data.portalData && { portalData: this.data.portalData }),
-      ...(typeof this.dateformatOption === 'number' && {
-        dateformats: this.dateformatOption,
-      }),
-      ...this.buildScriptOptions(),
-    };
+  object(fieldName: string, data: string | Blob, fileName?: string): this {
+    this.objectFields.push({ fieldName, data, fileName });
+    return this;
+  }
 
-    return await this.client.sendPost<FileMakerModifyResponse>(
-      url,
-      requestBody
-    );
+  async then(): Promise<FileMakerModifyResponse> {
+    try {
+      const filemakerToken = await this.client.auth.getFileMakerToken(
+        this.client.getCurrentDatabase()
+      );
+
+      const createResponse =
+        await this.client.sendPost<FileMakerModifyResponse>(
+          `layouts/${this.layoutName}/records`,
+          {
+            fieldData: this.data.fieldData,
+            ...(this.data.portalData && { portalData: this.data.portalData }),
+            ...(typeof this.dateformatOption === 'number' && {
+              dateformats: this.dateformatOption,
+            }),
+            ...this.buildScriptOptions(),
+          }
+        );
+
+      if (!createResponse.response?.recordId) {
+        throw new Error('レコードの作成に失敗しました');
+      }
+
+      if (this.objectFields.length > 0) {
+        await Promise.all(
+          this.objectFields.map(async (field) => {
+            const formData = new FormData();
+
+            try {
+              let blob: Blob;
+              if (typeof field.data === 'string') {
+                if (field.data.startsWith('data:')) {
+                  // Base64データの場合
+                  const response = await fetch(field.data);
+                  blob = await response.blob();
+                } else if (field.data.startsWith('http')) {
+                  // URLの場合
+                  const response = await fetch(field.data);
+                  blob = await response.blob();
+                } else {
+                  console.log('不正な形式のデータ:', field.data);
+                  return;
+                }
+              } else {
+                blob = field.data as Blob;
+              }
+
+              formData.append('upload', blob, field.fileName || 'image.jpg');
+
+              const response = await fetch(
+                `${this.client.getFileMakerUrl()}/${this.client.getCurrentDatabase()}/layouts/${
+                  this.layoutName
+                }/records/${createResponse.response.recordId}/containers/${
+                  field.fieldName
+                }/1`,
+                {
+                  method: 'POST',
+                  headers: {
+                    Authorization: `Bearer ${filemakerToken}`,
+                  },
+                  body: formData,
+                }
+              );
+
+              if (!response.ok) {
+                const errorText = await response.text();
+                console.error('FileMaker API Error:', {
+                  status: response.status,
+                  statusText: response.statusText,
+                  response: errorText,
+                  url: response.url,
+                });
+                throw new Error(
+                  `オブジェクトフィールド ${field.fieldName} のアップロードに失敗しました: ${response.status} ${response.statusText}`
+                );
+              }
+
+              const responseData = await response.json().catch(() => null);
+              console.log('FileMaker API Success:', {
+                status: response.status,
+                response: responseData,
+              });
+            } catch (error) {
+              console.error('画像アップロードエラー:', error);
+              throw error;
+            }
+          })
+        );
+      }
+
+      return createResponse;
+    } catch (error) {
+      throw error;
+    }
   }
 
   private buildScriptOptions(): Record<string, unknown> {
@@ -472,11 +563,103 @@ class PostBuilder<T extends keyof FMDatabase['Table']> {
   }
 }
 
+// PostBuilderクラスの後に配置
+interface ScriptPDFResponse {
+  base64: string;
+  recordId: string;
+  modId: string;
+  scriptError: string | null;
+}
+
+interface PDFRecord {
+  file: string;
+  uuid: string;
+}
+
+class ScriptPDFBuilder<T extends keyof FMDatabase['Table']> {
+  private readonly layoutName: T;
+  private readonly client: FileMakerClient;
+  private readonly data: FMDatabase['Table'][T]['create']['fieldData'];
+  private scriptName?: FMScriptName;
+  private scriptParam?: string;
+
+  constructor(
+    client: FileMakerClient,
+    layoutName: T,
+    data: FMDatabase['Table'][T]['create']['fieldData']
+  ) {
+    this.client = client;
+    this.layoutName = layoutName;
+    this.data = data;
+  }
+
+  script(name: FMScriptName): this {
+    this.scriptName = name;
+    return this;
+  }
+
+  scriptparam(param: string): this {
+    this.scriptParam = param;
+    return this;
+  }
+
+  async then(): Promise<ScriptPDFResponse> {
+    if (!this.scriptName) {
+      throw new Error('スクリプト名が指定されていません');
+    }
+
+    const post = this.client.post(this.layoutName, { fieldData: this.data });
+    post.script(this.scriptName, this.scriptParam);
+
+    const result = await post.then();
+
+    console.log('FileMaker Response:', {
+      scriptResult: result.response?.scriptResult,
+      scriptError: result.response?.scriptError,
+      recordId: result.response?.recordId,
+      messages: result.messages,
+    });
+
+    const scriptResult = result.response?.scriptResult;
+    const scriptError = result.response?.scriptError;
+
+    if (result.messages?.[0]?.code !== '0') {
+      throw new Error(
+        `PDFの生成に失敗しました: ${result.messages?.[0]?.message}`
+      );
+    }
+
+    if (!scriptResult) {
+      throw new Error('PDFの生成に失敗しました');
+    }
+
+    // scriptResultから layoutname と uuid を取得
+    const [targetLayout, uuid] = scriptResult.split('|');
+
+    // 生成されたPDFレコードを検索
+    const pdfRecord = (await this.client
+      .find(targetLayout as T)
+      .eq({ id: uuid } as any)
+      .first()) as PDFRecord | undefined;
+
+    if (!pdfRecord?.file) {
+      throw new Error('PDFファイルが見つかりません');
+    }
+
+    return {
+      base64: pdfRecord.file, // fileフィールドのURLを返す
+      recordId: result.response.recordId || '',
+      modId: result.response.modId || '',
+      scriptError: scriptError || null,
+    };
+  }
+}
+
 export default class FileMakerClient {
   private filemakerUrl: string;
   private headers: Record<string, string>;
   private fetch: Fetch;
-  protected auth: FileMakerAuth;
+  public auth: FileMakerAuth;
   private defaultDatabase: string;
   private currentDatabase: string;
 
@@ -874,6 +1057,57 @@ export default class FileMakerClient {
       console.error('ユーザー登録エラー:', error);
       throw error;
     }
+  }
+
+  public getCurrentDatabase(): string {
+    return this.currentDatabase;
+  }
+
+  public getFileMakerUrl(): string {
+    return this.filemakerUrl;
+  }
+
+  public obpost<T extends keyof FMDatabase['Table']>(
+    layoutName: T,
+    data: {
+      fieldData: FMDatabase['Table'][T]['create']['fieldData'];
+      portalData?: FMDatabase['Table'][T]['create'] extends {
+        portalData: infer P;
+      }
+        ? P
+        : never;
+    }
+  ) {
+    return new PostBuilder<T>(this, this.defaultDatabase, layoutName, data);
+  }
+
+  public getFetch(): Fetch {
+    return this.fetch;
+  }
+
+  async createWithImage<T extends keyof FMDatabase['Table']>(
+    layoutName: T,
+    data: FMDatabase['Table'][T]['create']['fieldData'],
+    imageField?: {
+      fieldName: string;
+      data: string;
+      fileName?: string;
+    }
+  ) {
+    const post = this.post(layoutName, { fieldData: data });
+
+    if (imageField?.data) {
+      post.object(imageField.fieldName, imageField.data, imageField.fileName);
+    }
+
+    return await post.then();
+  }
+
+  createWithScriptPDF<T extends keyof FMDatabase['Table']>(
+    layoutName: T,
+    data: FMDatabase['Table'][T]['create']['fieldData']
+  ) {
+    return new ScriptPDFBuilder<T>(this, layoutName, data);
   }
 }
 

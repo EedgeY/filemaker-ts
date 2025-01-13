@@ -53,6 +53,8 @@ export type FMDatabase = {
           creator_pk: string | null;
           id: number | null;
         };
+        recordId: string;
+        modId: string;
       };
       create: {
         fieldData: {
@@ -62,6 +64,8 @@ export type FMDatabase = {
           creator_pk: string | null;
           id: number | null;
         };
+        recordId: string;
+        modId: string;
       };
       update: {
         fieldData: Partial<{
@@ -71,6 +75,8 @@ export type FMDatabase = {
           creator_pk?: string | null;
           id?: number | null;
         }>;
+        recordId: string;
+        modId: string;
       };
     };
   };

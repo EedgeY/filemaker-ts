@@ -1,8 +1,22 @@
-export default function PostPage() {
+import CreateForm from './components/create-form';
+import PDFScript from './components/pdf-script';
+
+export default async function PostPage() {
   return (
-    <div>
-      <h1>Post Operations</h1>
-      {/* TODO: データ作成・編集機能を実装 */}
+    <div className='space-y-8 p-4'>
+      <h1 className='text-2xl font-bold'>Post Operations</h1>
+      <PDFScript />
+
+      <div className='grid md:grid-cols-2 gap-8'>
+        <div>
+          <h2 className='text-xl font-semibold mb-4'>新規作成</h2>
+          <CreateForm />
+        </div>
+
+        <div>
+          <h2 className='text-xl font-semibold mb-4'>編集</h2>
+        </div>
+      </div>
     </div>
   );
 }
